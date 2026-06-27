@@ -1,0 +1,46 @@
+name: Playwright Python2
+
+on:
+  workflow_dispatch:
+
+jobs:
+  run-playwright:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install tinyproxy
+        run: |
+          sudo apt update
+          sudo apt install tinyproxy -y
+
+      - name: Start tinyproxy
+        run: |
+          tinyproxy -d -c tinyproxy.conf &
+
+      - name: clone repo
+        run: |
+          git clone https://github.com/Decent5013-linux/C-link && cd C-link
+
+      - name: Run docker compose
+        run: |
+          docker compose -f docker-compose.yml up -d --build
+
+      - name: Keep workflow running for 6 hours
+        run: |
+          echo "Docker compose completed. Keeping workflow alive for 6 hours..."
+          echo "Start time: $(date)"
+          sleep 21600  # 6 hours = 21600 seconds
+          echo "End time: $(date)"
+          echo "6 hours completed. Workflow will now finish."
