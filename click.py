@@ -29,7 +29,7 @@ left_after_upward = 100  # Mouse will shift left 1 to left_after_upward pixels a
 
 # Time to wait before clicking (random between these values in milliseconds)
 WAIT_BEFORE_CLICK_MIN = 30000  # 30 seconds
-WAIT_BEFORE_CLICK_MAX = 40000  # 40 seconds
+WAIT_BEFORE_CLICK_MAX = 60000  # 40 seconds
 
 # Time to wait for URL change (seconds)
 URL_CHANGE_TIMEOUT = 7
