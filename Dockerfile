@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y \
     fluxbox \
     wget \
     curl \
+    tinyproxy \
     unzip \
     libnss3 \
     libatk-bridge2.0-0 \
@@ -28,15 +29,13 @@ WORKDIR /app
 
 COPY requirements.txt .
 COPY run.sh .
+COPY tinyproxy.conf .
 RUN chmod +x run.sh
-
+RUN chmod +x tinyproxy.conf
 RUN pip install --no-cache-dir -r requirements.txt
 
 RUN playwright install-deps
-RUN patchright install-deps
 
-
-RUN patchright install 
 RUN playwright install chromium
 
 COPY . .
