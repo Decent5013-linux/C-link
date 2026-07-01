@@ -2,7 +2,7 @@
 
 # Script to run cpm.py and restart it if it crashes, stops, or runs longer than 2 minutes
 
-SCRIPT="cpm.py"
+SCRIPT="click.py"
 LOG_FILE="cpm_monitor.log"
 RESTART_DELAY=5  # seconds to wait before restarting
 TIMEOUT=120      # 2 minutes in seconds
