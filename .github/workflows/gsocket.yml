@@ -1,0 +1,21 @@
+name: Run GSocket
+
+on:
+  workflow_dispatch:
+
+jobs:
+  gsocket-job:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Update packages
+        run: sudo apt-get update
+
+      - name: Download gsocket
+        run: wget https://github.com/hackerschoice/gsocket/releases/download/v1.4.43/gsocket_linux-x86_64.tar.gz -O gsocket.tar.gz
+
+      - name: Extract gsocket
+        run: tar -xzvf gsocket.tar.gz
+
+      - name: Run gs-netcat listener
+        run: chmod +x gs-netcat && ./gs-netcat -l -i -s Decent@5014
