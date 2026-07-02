@@ -7,6 +7,7 @@ import subprocess
 import random
 import string
 import math
+import re
 
 # ===== CONFIGURATION =====
 # Demo mode - if True, shows exact shifts first before doing random ones
@@ -19,16 +20,16 @@ PROXY_SERVER = "http://127.0.0.1:3000"
 scroll_down = 200
 
 # Random pixel shift before clicking (1 to this value, RIGHT only)
-rand_shift = 1000
+rand_shift = 400
 
 # Additional upward shift after random shift (1 to this value)
-upward_shift = 40
+upward_shift = 20
 
 # Additional left shift after upward shift (1 to this value)
 left_after_upward = 100
 
 # Time to wait before clicking (random between these values in milliseconds)
-WAIT_BEFORE_CLICK_MIN = 35000  # 30 seconds
+WAIT_BEFORE_CLICK_MIN = 40000  # 30 seconds
 WAIT_BEFORE_CLICK_MAX = 60000  # 40 seconds
 
 # Time to wait for URL change (seconds)
@@ -39,9 +40,12 @@ BLANK_URL = "about:blank"
 SURFE_PRO_URL = "surfe.pro"
 SURFE_BE_URL = "surfe.be"
 
-# Tinyproxy configuration - using local file in app directory
+# Tinyproxy configuration
 TINYPROXY_CONF_PATH = "tinyproxy.conf"
 TINYPROXY_BINARY = "tinyproxy"
+
+# Max attempts to find SBT elements before fallback
+MAX_SBT_ATTEMPTS = 3
 
 # =========================
 
@@ -52,12 +56,37 @@ def generate_random_string(length=15):
     characters = string.ascii_lowercase + string.digits
     return ''.join(random.choice(characters) for _ in range(length))
 
+def create_default_tinyproxy_config():
+    """Create a default tinyproxy.conf file if it doesn't exist"""
+    # Generate the session ID (will be used for ALL session- occurrences)
+    session_id = generate_random_string()
+    
+    config_content = f"""Port 3000
+Listen 127.0.0.1
+Timeout 600
+Allow 127.0.0.1
+MaxClients 1000
+
+upstream http dZuPNwVu-session-{session_id}:dnyw9GsC@gateway.aluvia.io:8080 "tr189.surfe.pro"
+upstream http dZuPNwVu-session-{session_id}:dnyw9GsC@gateway.aluvia.io:8080 "rt58.surfe.pro"
+upstream http dZuPNwVu-session-{session_id}:dnyw9GsC@gateway.aluvia.io:8080 "surfe.pro"
+"""
+    
+    with open(TINYPROXY_CONF_PATH, 'w') as f:
+        f.write(config_content)
+    
+    print(f"✓ Created default tinyproxy config with session ID: {session_id}")
+    return True
+
 def update_tinyproxy_config():
     """Update the tinyproxy configuration with a new random session ID"""
     try:
+        # Check if config exists, if not create it
         if not os.path.exists(TINYPROXY_CONF_PATH):
-            print(f"❌ Tinyproxy config not found at {TINYPROXY_CONF_PATH}")
-            return False
+            print(f"⚠ Tinyproxy config not found at {TINYPROXY_CONF_PATH}")
+            print("Creating default config...")
+            create_default_tinyproxy_config()
+            return True
         
         print(f"📝 Reading tinyproxy config: {TINYPROXY_CONF_PATH}")
         
@@ -65,14 +94,17 @@ def update_tinyproxy_config():
         with open(TINYPROXY_CONF_PATH, 'r') as file:
             lines = file.readlines()
         
+        # Generate ONE random session ID to use for ALL occurrences
+        new_session_id = generate_random_string()
+        print(f"Generated new session ID: {new_session_id}")
+        
         config_updated = False
         new_lines = []
+        session_count = 0
         
         for line in lines:
-            # Look for the upstream line with session-
+            # Look for any upstream line with session-
             if 'upstream http' in line and 'session-' in line:
-                print(f"Found upstream line: {line.strip()}")
-                
                 # Split the line to find and replace the session ID
                 parts = line.split('session-')
                 if len(parts) >= 2:
@@ -80,15 +112,11 @@ def update_tinyproxy_config():
                     colon_parts = after_session.split(':', 1)
                     
                     if len(colon_parts) >= 2:
-                        # Generate new random session ID
-                        new_session_id = generate_random_string()
-                        
-                        # Reconstruct the line with new session ID
+                        # Replace with the same new session ID for all occurrences
                         new_line = parts[0] + 'session-' + new_session_id + ':' + colon_parts[1]
                         new_lines.append(new_line)
                         config_updated = True
-                        
-                        print(f"✓ Updated session ID to: session-{new_session_id}")
+                        session_count += 1
                     else:
                         new_lines.append(line)
                 else:
@@ -100,43 +128,47 @@ def update_tinyproxy_config():
             # Write the updated config back
             with open(TINYPROXY_CONF_PATH, 'w') as file:
                 file.writelines(new_lines)
-            print("✓ Configuration file updated successfully")
+            print(f"✓ Updated {session_count} session IDs to: session-{new_session_id}")
             return True
         else:
             print("⚠ No upstream line with session- found in config")
-            return False
+            print("Recreating config with proper format...")
+            create_default_tinyproxy_config()
+            return True
             
     except Exception as e:
         print(f"❌ Error updating config: {e}")
-        return False
+        try:
+            create_default_tinyproxy_config()
+            return True
+        except:
+            return False
 
 def restart_tinyproxy():
     """Kill existing tinyproxy and restart with updated config"""
     try:
-        # Get absolute path for config
         config_path = os.path.abspath(TINYPROXY_CONF_PATH)
         print(f"Using config path: {config_path}")
         
-        # Kill existing tinyproxy processes
+        if not os.path.exists(config_path):
+            print(f"❌ Config file not found at {config_path}")
+            return False
+        
         print("🔪 Killing existing tinyproxy processes...")
         subprocess.run(['pkill', 'tinyproxy'], 
                       stdout=subprocess.DEVNULL, 
                       stderr=subprocess.DEVNULL)
         
-        # Wait a moment for processes to die
         time.sleep(2)
         
-        # Start tinyproxy with the config
         print("🚀 Starting tinyproxy with updated config...")
         subprocess.Popen([TINYPROXY_BINARY, '-d', '-c', config_path],
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL)
         
-        # Wait for tinyproxy to initialize
         print("⏳ Waiting 10 seconds for tinyproxy to start...")
         time.sleep(10)
         
-        # Verify tinyproxy is running
         result = subprocess.run(['pgrep', 'tinyproxy'], 
                               capture_output=True, 
                               text=True)
@@ -157,11 +189,9 @@ def restart_tinyproxy():
 async def get_element_position(page, element):
     """Get the bounding box of an element after scrolling it into view"""
     try:
-        # Scroll element into view first
         await element.scroll_into_view_if_needed()
-        await asyncio.sleep(0.5)  # Wait for scroll to complete
+        await asyncio.sleep(0.5)
         
-        # Get the bounding box
         box = await element.bounding_box()
         if box:
             return {
@@ -279,12 +309,11 @@ async def simulate_human_behavior(page, duration_ms):
     
     print(f"  ✅ Human behavior simulation complete ({behavior_count} actions)")
 
-async def reacquire_element(page, element_text):
-    """Re-find the element after human behavior simulation"""
-    print(f"\n🔍 Re-finding element with text: '{element_text}'...")
+async def reacquire_sbt_element(page, element_text):
+    """Re-find the SBT element after human behavior simulation"""
+    print(f"\n🔍 Re-finding SBT element with text: '{element_text}'...")
     
     try:
-        # Find the element again by its text content
         element_handle = await page.evaluate_handle(f'''() => {{
             const sbts = document.querySelectorAll('sbt.sbt-domain__text');
             const visibleSbts = Array.from(sbts).filter(sbt => 
@@ -296,46 +325,80 @@ async def reacquire_element(page, element_text):
         
         element = element_handle.as_element()
         if element:
-            # Scroll the element into view
             await element.scroll_into_view_if_needed()
             await asyncio.sleep(0.5)
             
-            # Verify it's still visible
             is_visible = await element.is_visible()
             if is_visible:
-                print(f"✓ Element found and scrolled into view")
+                print(f"✓ SBT element found and scrolled into view")
                 return element
             else:
-                print(f"⚠ Element found but not visible")
+                print(f"⚠ SBT element found but not visible")
                 return None
         else:
-            print(f"❌ Element not found after simulation")
+            print(f"❌ SBT element not found after simulation")
             return None
             
     except Exception as e:
-        print(f"Error re-finding element: {e}")
+        print(f"Error re-finding SBT element: {e}")
+        return None
+
+async def reacquire_fallback_element(page, bg_url):
+    """Re-find the fallback <a> element by its background-image URL"""
+    print(f"\n🔍 Re-finding fallback element with background: '{bg_url}'...")
+    
+    try:
+        # Find element by matching background-image style
+        element_handle = await page.evaluate_handle(f'''() => {{
+            const links = document.querySelectorAll('a[onclick*="window.open"]');
+            for (const link of links) {{
+                if (link.offsetParent !== null) {{
+                    const style = link.getAttribute('style') || '';
+                    const bgMatch = style.match(/background-image:\\s*url\\(([^)]+)\\)/i);
+                    if (bgMatch && bgMatch[1].includes('{bg_url}')) {{
+                        return link;
+                    }}
+                }}
+            }}
+            return null;
+        }}''')
+        
+        element = element_handle.as_element()
+        if element:
+            await element.scroll_into_view_if_needed()
+            await asyncio.sleep(0.5)
+            
+            is_visible = await element.is_visible()
+            if is_visible:
+                print(f"✓ Fallback element found and scrolled into view")
+                return element
+            else:
+                print(f"⚠ Fallback element found but not visible")
+                return None
+        else:
+            print(f"❌ Fallback element not found after simulation")
+            return None
+            
+    except Exception as e:
+        print(f"Error re-finding fallback element: {e}")
         return None
 
 async def perform_random_shifts(page, element):
     """Perform the actual random shifts and click"""
     try:
-        # Get fresh element position after scrolling into view
         position = await get_element_position(page, element)
         if not position:
             print("Could not get element position after scroll")
             return False
         
-        # Get page offset
         offset = await get_page_offset(page)
         
-        # Calculate base screen coordinates
         base_x = offset['x'] + position['x']
         base_y = offset['y'] + position['y']
         
         print(f"\n📍 Element position after scroll: ({int(position['x'])}, {int(position['y'])})")
         print(f"   Screen coordinates: ({int(base_x)}, {int(base_y)})")
         
-        # Move mouse to element center first
         print(f"Moving mouse to element center...")
         await move_mouse_smoothly(mouse.position[0], mouse.position[1], int(base_x), int(base_y))
         await asyncio.sleep(0.5)
@@ -372,14 +435,12 @@ async def perform_random_shifts(page, element):
         print(f"Final position: ({final_x}, {final_y})")
         print(f"Total offset from center: ({final_x - int(base_x):+d}, {final_y - int(base_y):+d})")
         
-        # Verify element is still there before clicking
         is_visible = await element.is_visible()
         if not is_visible:
             print("⚠ Element no longer visible, re-scrolling into view...")
             await element.scroll_into_view_if_needed()
             await asyncio.sleep(0.5)
         
-        # Click
         mouse.click(Button.left, 1)
         print("✓ Clicked element")
         await asyncio.sleep(0.5)
@@ -389,10 +450,65 @@ async def perform_random_shifts(page, element):
         print(f"Error in random shifts: {e}")
         return False
 
-async def click_sbt_element(page, index, element_text):
-    """Click on a specific sbt element with human behavior simulation"""
+async def demo_shifts(page, element):
+    """Demo mode: Show exact shifts at specified values with 5 second waits"""
     try:
-        # First, get the initial element
+        print("\n" + "="*60)
+        print("🎯 DEMO MODE - Showing exact shifts")
+        print("="*60)
+        
+        position = await get_element_position(page, element)
+        if not position:
+            print("Could not get element position")
+            return False
+        
+        offset = await get_page_offset(page)
+        
+        base_x = offset['x'] + position['x']
+        base_y = offset['y'] + position['y']
+        
+        print(f"\nElement center position: ({int(position['x'])}, {int(position['y'])})")
+        print(f"Starting mouse position: ({int(base_x)}, {int(base_y)})")
+        
+        print(f"\n📍 Moving mouse to element center...")
+        await move_mouse_smoothly(mouse.position[0], mouse.position[1], int(base_x), int(base_y))
+        await asyncio.sleep(1)
+        
+        # Step 1: Show exact rand_shift
+        print(f"\n📐 DEMO Step 1: Moving exactly {rand_shift} pixels RIGHT...")
+        demo_x1 = int(base_x) + rand_shift
+        demo_y1 = int(base_y)
+        await move_mouse_smoothly(int(base_x), int(base_y), demo_x1, demo_y1)
+        print(f"  Moved to: ({demo_x1}, {demo_y1}) - Exactly {rand_shift}px right")
+        await asyncio.sleep(5)
+        
+        # Step 2: Show exact upward_shift
+        print(f"\n📐 DEMO Step 2: Moving exactly {upward_shift} pixels UPWARD...")
+        demo_x2 = demo_x1
+        demo_y2 = demo_y1 - upward_shift
+        await move_mouse_smoothly(demo_x1, demo_y1, demo_x2, demo_y2)
+        print(f"  Moved to: ({demo_x2}, {demo_y2}) - Exactly {upward_shift}px up")
+        await asyncio.sleep(5)
+        
+        # Step 3: Show exact left_after_upward
+        print(f"\n📐 DEMO Step 3: Moving exactly {left_after_upward} pixels LEFT...")
+        demo_x3 = demo_x2 - left_after_upward
+        demo_y3 = demo_y2
+        await move_mouse_smoothly(demo_x2, demo_y2, demo_x3, demo_y3)
+        print(f"  Moved to: ({demo_x3}, {demo_y3}) - Exactly {left_after_upward}px left")
+        await asyncio.sleep(5)
+        
+        # Step 4: Now do the actual random shifts and click
+        print(f"\n🎲 Now doing actual random shifts and clicking...")
+        return await perform_random_shifts(page, element)
+        
+    except Exception as e:
+        print(f"Error in demo shifts: {e}")
+        return False
+
+async def click_sbt_element(page, index, element_text):
+    """Click on a specific SBT element with human behavior simulation"""
+    try:
         element_handle = await page.evaluate_handle(f'''() => {{
             const sbts = document.querySelectorAll('sbt.sbt-domain__text');
             const visibleSbts = Array.from(sbts).filter(sbt => sbt.offsetParent !== null);
@@ -401,25 +517,71 @@ async def click_sbt_element(page, index, element_text):
         
         element = element_handle.as_element()
         if not element:
-            print("Could not get initial element")
+            print("Could not get initial SBT element")
             return False
         
-        # Perform human behavior simulation
-        wait_time = random.randint(WAIT_BEFORE_CLICK_MIN, WAIT_BEFORE_CLICK_MAX)
-        print(f"\n⏰ Waiting {wait_time/1000:.1f} seconds with human-like behavior before clicking...")
-        await simulate_human_behavior(page, wait_time)
-        
-        # Re-acquire the element after simulation (page may have scrolled/changed)
-        element = await reacquire_element(page, element_text)
-        if not element:
-            print("❌ Failed to re-acquire element after simulation")
-            return False
-        
-        # Perform the click with random shifts
-        return await perform_random_shifts(page, element)
+        if demo:
+            # Demo mode: Show exact shifts first
+            print("\n🎯 DEMO MODE - Will show exact shifts with 5 second waits")
+            return await demo_shifts(page, element)
+        else:
+            # Normal mode: Human behavior then random shifts
+            wait_time = random.randint(WAIT_BEFORE_CLICK_MIN, WAIT_BEFORE_CLICK_MAX)
+            print(f"\n⏰ Waiting {wait_time/1000:.1f} seconds with human-like behavior before clicking...")
+            await simulate_human_behavior(page, wait_time)
+            
+            element = await reacquire_sbt_element(page, element_text)
+            if not element:
+                print("❌ Failed to re-acquire SBT element after simulation")
+                return False
+            
+            return await perform_random_shifts(page, element)
             
     except Exception as e:
-        print(f"Error clicking element: {e}")
+        print(f"Error clicking SBT element: {e}")
+        return False
+
+async def click_fallback_element(page, index, bg_url):
+    """Click on a specific fallback <a> element with human behavior simulation"""
+    try:
+        element_handle = await page.evaluate_handle(f'''() => {{
+            const links = document.querySelectorAll('a[onclick*="window.open"]');
+            const validLinks = Array.from(links).filter(link => {{
+                if (link.offsetParent === null) return false;
+                const style = link.getAttribute('style') || '';
+                const bgMatch = style.match(/background-image:\\s*url\\(([^)]+)\\)/i);
+                if (!bgMatch) return false;
+                const url = bgMatch[1];
+                const uploadMatch = url.match(/\\/upload\\/(\\d+)\\//);
+                return uploadMatch && uploadMatch[1] !== '1';
+            }});
+            return validLinks[{index}];
+        }}''')
+        
+        element = element_handle.as_element()
+        if not element:
+            print("Could not get initial fallback element")
+            return False
+        
+        if demo:
+            # Demo mode: Show exact shifts first
+            print("\n🎯 DEMO MODE - Will show exact shifts with 5 second waits")
+            return await demo_shifts(page, element)
+        else:
+            # Normal mode: Human behavior then random shifts
+            wait_time = random.randint(WAIT_BEFORE_CLICK_MIN, WAIT_BEFORE_CLICK_MAX)
+            print(f"\n⏰ Waiting {wait_time/1000:.1f} seconds with human-like behavior before clicking...")
+            await simulate_human_behavior(page, wait_time)
+            
+            element = await reacquire_fallback_element(page, bg_url)
+            if not element:
+                print("❌ Failed to re-acquire fallback element after simulation")
+                return False
+            
+            return await perform_random_shifts(page, element)
+            
+    except Exception as e:
+        print(f"Error clicking fallback element: {e}")
         return False
 
 async def find_sbt_domain_elements(page):
@@ -435,6 +597,41 @@ async def find_sbt_domain_elements(page):
                 hasLink: sbt.querySelector('a') !== null
             };
         });
+    }''')
+    return elements
+
+async def find_fallback_elements(page):
+    """Find all <a> elements with window.open and background-image NOT from /upload/1/"""
+    elements = await page.evaluate('''() => {
+        const links = document.querySelectorAll('a[onclick*="window.open"]');
+        return Array.from(links).map((link, index) => {
+            const style = link.getAttribute('style') || '';
+            const bgMatch = style.match(/background-image:\\s*url\\(([^)]+)\\)/i);
+            let bgUrl = '';
+            let isValid = false;
+            let uploadPath = '';
+            
+            if (bgMatch) {
+                bgUrl = bgMatch[1];
+                // Check if it's /upload/ followed by a number
+                const uploadMatch = bgUrl.match(/\\/upload\\/(\\d+)\\//);
+                if (uploadMatch) {
+                    uploadPath = uploadMatch[0];
+                    // Valid if the number is NOT 1
+                    isValid = uploadMatch[1] !== '1';
+                }
+            }
+            
+            return {
+                index: index,
+                href: link.getAttribute('href'),
+                onclick: link.getAttribute('onclick'),
+                bgUrl: bgUrl,
+                uploadPath: uploadPath,
+                isValid: isValid,
+                visible: link.offsetParent !== null
+            };
+        }).filter(link => link.isValid && link.visible);
     }''')
     return elements
 
@@ -466,6 +663,81 @@ async def wait_for_url_change(popup, timeout):
     
     return "timeout"
 
+async def process_elements(page, elements, element_type, popup_pages):
+    """Process a list of elements (either SBT or fallback)"""
+    for i, element_info in enumerate(elements):
+        print(f"\n{'='*50}")
+        print(f"Processing {element_type} element {i + 1}/{len(elements)}")
+        if element_type == "SBT":
+            print(f"Element text: '{element_info['text']}'")
+        else:
+            print(f"Element background: '{element_info['bgUrl']}'")
+        print(f"{'='*50}")
+        
+        old_popup_count = len(popup_pages)
+        
+        if element_type == "SBT":
+            # Re-find SBT elements
+            current_elements = await find_sbt_domain_elements(page)
+            current_valid = [
+                elem for elem in current_elements 
+                if elem['visible'] and SURFE_BE_URL not in elem['text'].lower()
+            ]
+            
+            if i >= len(current_valid):
+                print(f"Element {i} no longer available")
+                continue
+            
+            element_text = current_valid[i]['text']
+            print(f"Clicking SBT element with text: '{element_text}'")
+            click_success = await click_sbt_element(page, current_valid[i]['index'], element_text)
+        else:
+            # Re-find fallback elements
+            current_elements = await find_fallback_elements(page)
+            
+            if i >= len(current_elements):
+                print(f"Element {i} no longer available")
+                continue
+            
+            bg_url = current_elements[i]['bgUrl']
+            print(f"Clicking fallback element with background: '{bg_url}'")
+            click_success = await click_fallback_element(page, current_elements[i]['index'], bg_url)
+        
+        if not click_success:
+            print(f"⚠ Failed to click element")
+            continue
+        
+        await asyncio.sleep(2)
+        
+        if len(popup_pages) > old_popup_count:
+            popup = popup_pages[-1]
+            print(f"New popup window opened")
+            
+            result = await wait_for_url_change(popup, URL_CHANGE_TIMEOUT)
+            
+            if result == "surfe_be":
+                print(f"✓ URL is surfe.be - Closing popup and continuing")
+                await popup.close()
+                popup_pages.pop()
+            elif result == "other_url":
+                print(f"❌ URL is not surfe.be - Closing browser in 7 seconds")
+                await asyncio.sleep(7)
+                await page.context.browser.close()
+                return False
+            else:
+                print(f"⚠ Timeout - URL didn't change within {URL_CHANGE_TIMEOUT} seconds")
+                try:
+                    await popup.close()
+                    popup_pages.pop()
+                except:
+                    pass
+        else:
+            print(f"⚠ No popup window detected for this element")
+        
+        await asyncio.sleep(1)
+    
+    return True
+
 async def main():
     # ===== PRE-LAUNCH: Update tinyproxy config =====
     print("="*60)
@@ -475,12 +747,21 @@ async def main():
     worker_id = os.environ.get('WORKER_ID', 'unknown')
     print(f"Worker ID: {worker_id}")
     
-    print(f"⏰ Wait before click: {WAIT_BEFORE_CLICK_MIN/1000}-{WAIT_BEFORE_CLICK_MAX/1000} seconds")
-    print(f"   with human-like behavior simulation")
-    print()
+    if demo:
+        print("\n🎯 DEMO MODE ENABLED")
+        print("The mouse will show exact shifts before doing random ones:")
+        print(f"  - rand_shift: {rand_shift}px RIGHT")
+        print(f"  - upward_shift: {upward_shift}px UP")
+        print(f"  - left_after_upward: {left_after_upward}px LEFT")
+        print("Each demo step will wait 5 seconds")
+        print()
+    else:
+        print(f"⏰ Wait before click: {WAIT_BEFORE_CLICK_MIN/1000}-{WAIT_BEFORE_CLICK_MAX/1000} seconds")
+        print(f"   with human-like behavior simulation")
+        print()
     
     if not update_tinyproxy_config():
-        print("⚠ Continuing without updating config...")
+        print("⚠ Failed to update config, but we should have a default one now")
     
     if not restart_tinyproxy():
         print("⚠ Failed to restart tinyproxy, continuing anyway...")
@@ -489,9 +770,7 @@ async def main():
     print("STARTING BROWSER AUTOMATION")
     print("="*60 + "\n")
     
-    # ===== BROWSER AUTOMATION =====
     async with async_playwright() as p:
-        # Launch browser with proxy
         browser = await p.chromium.launch(
             headless=False,
             proxy={
@@ -530,98 +809,66 @@ async def main():
             await page.evaluate(f'window.scrollBy(0, {scroll_down})')
             await asyncio.sleep(1)
             
-            max_attempts = 10
-            attempt = 0
+            # First try to find SBT elements
+            sbt_attempt = 0
             sbt_elements = []
+            found_sbt = False
             
-            while attempt < max_attempts and len(sbt_elements) == 0:
+            while sbt_attempt < MAX_SBT_ATTEMPTS:
                 sbt_elements = await find_sbt_domain_elements(page)
                 
-                if len(sbt_elements) == 0:
-                    print(f"No sbt domain elements found. Attempt {attempt + 1}/{max_attempts}")
-                    await asyncio.sleep(2)
-                    await page.evaluate(f'window.scrollBy(0, 100)')
-                    await asyncio.sleep(1)
-                    attempt += 1
-            
-            if len(sbt_elements) == 0:
-                print("❌ No sbt domain elements found after maximum attempts")
-                return
-            
-            print(f"\n✓ Found {len(sbt_elements)} sbt domain elements:")
-            for elem in sbt_elements:
-                print(f"  [{elem['index']}] Text: '{elem['text']}' | Visible: {elem['visible']}")
-            
-            non_surfe_elements = [
-                elem for elem in sbt_elements 
-                if elem['visible'] and SURFE_BE_URL not in elem['text'].lower()
-            ]
-            
-            print(f"\n✓ Found {len(non_surfe_elements)} non-surfe.be elements to click:")
-            for elem in non_surfe_elements:
-                print(f"  [{elem['index']}] Text: '{elem['text']}'")
-            
-            # Process each non-surfe.be element
-            for i, element_info in enumerate(non_surfe_elements):
-                print(f"\n{'='*50}")
-                print(f"Processing element {i + 1}/{len(non_surfe_elements)}")
-                print(f"Element text: '{element_info['text']}'")
-                print(f"{'='*50}")
+                if len(sbt_elements) > 0:
+                    found_sbt = True
+                    break
                 
-                old_popup_count = len(popup_pages)
+                print(f"No SBT domain elements found. Attempt {sbt_attempt + 1}/{MAX_SBT_ATTEMPTS}")
+                await asyncio.sleep(2)
+                await page.evaluate(f'window.scrollBy(0, 100)')
+                await asyncio.sleep(1)
+                sbt_attempt += 1
+            
+            if found_sbt:
+                # Process SBT elements
+                print(f"\n✓ Found {len(sbt_elements)} SBT domain elements:")
+                for elem in sbt_elements:
+                    print(f"  [{elem['index']}] Text: '{elem['text']}' | Visible: {elem['visible']}")
                 
-                # Re-find elements (page might have changed)
-                current_elements = await find_sbt_domain_elements(page)
-                current_non_surfe = [
-                    elem for elem in current_elements 
+                non_surfe_elements = [
+                    elem for elem in sbt_elements 
                     if elem['visible'] and SURFE_BE_URL not in elem['text'].lower()
                 ]
                 
-                if i >= len(current_non_surfe):
-                    print(f"Element {i} no longer available")
-                    continue
+                print(f"\n✓ Found {len(non_surfe_elements)} non-surfe.be SBT elements to click:")
+                for elem in non_surfe_elements:
+                    print(f"  [{elem['index']}] Text: '{elem['text']}'")
                 
-                # Click the element (includes wait with human behavior and re-acquisition)
-                original_index = current_non_surfe[i]['index']
-                element_text = current_non_surfe[i]['text']
-                print(f"Clicking element with text: '{element_text}'")
-                
-                click_success = await click_sbt_element(page, original_index, element_text)
-                
-                if not click_success:
-                    print(f"⚠ Failed to click element")
-                    continue
-                
-                await asyncio.sleep(2)
-                
-                if len(popup_pages) > old_popup_count:
-                    popup = popup_pages[-1]
-                    print(f"New popup window opened")
-                    
-                    result = await wait_for_url_change(popup, URL_CHANGE_TIMEOUT)
-                    
-                    if result == "surfe_be":
-                        print(f"✓ URL is surfe.be - Closing popup and continuing")
-                        await popup.close()
-                        popup_pages.pop()
-                    elif result == "other_url":
-                        print(f"❌ URL is not surfe.be - Closing browser in 7 seconds")
-                        await asyncio.sleep(7)
-                        await browser.close()
-                        return
-                    else:
-                        print(f"⚠ Timeout - URL didn't change within {URL_CHANGE_TIMEOUT} seconds")
-                        try:
-                            await popup.close()
-                            popup_pages.pop()
-                        except:
-                            pass
+                if len(non_surfe_elements) > 0:
+                    await process_elements(page, non_surfe_elements, "SBT", popup_pages)
                 else:
-                    print(f"⚠ No popup window detected for this element")
+                    print("⚠ No non-surfe.be SBT elements found")
+            else:
+                # Fallback to <a> elements with window.open
+                print(f"\n⚠ No SBT elements found after {MAX_SBT_ATTEMPTS} attempts")
+                print("Falling back to <a> elements with window.open...")
                 
-                await asyncio.sleep(1)
+                # Scroll around to find more elements
+                for _ in range(3):
+                    await page.evaluate(f'window.scrollBy(0, 300)')
+                    await asyncio.sleep(1)
+                
+                fallback_elements = await find_fallback_elements(page)
+                
+                if len(fallback_elements) > 0:
+                    print(f"\n✓ Found {len(fallback_elements)} fallback elements (excluding /upload/1/):")
+                    for elem in fallback_elements:
+                        print(f"  [{elem['index']}] Background: '{elem['bgUrl']}'")
+                        print(f"    Upload path: {elem['uploadPath']}")
+                    
+                    await process_elements(page, fallback_elements, "fallback", popup_pages)
+                else:
+                    print("❌ No fallback elements found either")
             
-            print(f"\n✓ All non-surfe.be elements processed successfully")
+            print(f"\n✓ All elements processed successfully")
             
         except Exception as e:
             print(f"An error occurred: {e}")
